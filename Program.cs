@@ -132,7 +132,6 @@
 
         static async Task UploadSmallFileToDropbox(DropboxClient client, string filePath, string destinationPath)
         {
-            var fileName = Path.GetFileName(filePath);
             var bytes = File.ReadAllBytes(filePath);
 
             using (var stream = new MemoryStream(bytes))
@@ -171,7 +170,6 @@
 
                             if (idx == numChunks - 1)
                             {
-                                var fileName = Path.GetFileName(filePath);
                                 await client.Files.UploadSessionFinishAsync(cursor, new CommitInfo(destinationPath), memStream);
 
                                 Console.WriteLine("Uploaded successfully to dropbox.");
