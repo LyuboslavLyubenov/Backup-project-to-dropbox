@@ -14,7 +14,8 @@
 
     class Program
     {
-        const int BigFileChunkSize = 128 * 1024;
+        private const int MaxProjectsBackupsCount = 3;
+        private const int BigFileChunkSize = 1024 * 1024;
 
         static void Main(string[] args)
         {
@@ -45,14 +46,20 @@
 
             try
             {
-                var projectDirectoryName = new DirectoryInfo(projectPath).Name;
+                var projectName = new DirectoryInfo(projectPath).Name;
+                var dropboxClient = new DropboxClient(token);
+                
+                if (HaveMoreThan3BackupsForProject(dropboxClient, projectName))
+                {
+                    DeleteOldestBackup(dropboxClient, projectName);
+                }
+
                 var archivePath = ArchiveFolder(projectPath, archiveDirectory);
                 var archiveName = Path.GetFileName(archivePath);
                 UploadFileToDropbox(
-                        token,
+                        dropboxClient,
                         archivePath,
-                        $"/backups/{projectDirectoryName}/{DateTime.Now:MMddyyyy}/{archiveName}")
-                    .Wait();
+                        $"/backups/{projectName}/{DateTime.Now:ddMMyyyy}/{archiveName}");
             }
             finally
             {
@@ -69,6 +76,39 @@
                 Directory.GetFiles(archiveDirectory).ToList().ForEach(File.Delete);
                 Directory.Delete(archiveDirectory);
             }
+        }
+
+        static void DeleteOldestBackup(DropboxClient client, string projectName)
+        {
+            var oldestBackupFolderPath = GetOldestBackupFolderPath(client, projectName);
+            client.Files.DeleteAsync(oldestBackupFolderPath)
+                .Wait();
+        }
+
+        static string GetOldestBackupFolderPath(DropboxClient client, string projectName)
+        {
+            var backupsFolders = client.Files.ListFolderAsync($"/backups/{projectName}/");
+            backupsFolders.Wait();
+            var oldestBackupFolderName = backupsFolders.Result.Entries.Where(e => e.IsFolder)
+                .OrderBy(e => e.Name)
+                .First()
+                .Name;
+            return $"/backups/{projectName}/{oldestBackupFolderName}";
+        }
+
+        static bool HaveMoreThan3BackupsForProject(DropboxClient client, string projectName)
+        {
+            var projects = client.Files.ListFolderAsync("/backups/");
+            projects.Wait();
+
+            if (!projects.Result.Entries.Any(e => e.IsFolder && e.Name == projectName))
+            {
+                return false;
+            }
+
+            var backupsCount = client.Files.ListFolderAsync($"/backups/{projectName}/");
+            backupsCount.Wait();
+            return backupsCount.Result.Entries.Count(e => e.IsFolder) > MaxProjectsBackupsCount;
         }
 
         /// <summary>
@@ -102,18 +142,19 @@
             return archivePath;
         }
 
-        static async Task UploadFileToDropbox(string token, string filePath, string destinationPath)
+        static void UploadFileToDropbox(DropboxClient dropboxClient, string filePath, string destinationPath)
         {
-            var dropboxClient = new DropboxClient(token);
             var fileSize = GetFileSize(filePath);
 
             if (fileSize > BigFileChunkSize)
             {
-                await UploadBigFileToDropbox(dropboxClient, filePath, destinationPath);
+                UploadBigFileToDropbox(dropboxClient, filePath, destinationPath)
+                    .Wait();
             }
             else
             {
-                await UploadSmallFileToDropbox(dropboxClient, filePath, destinationPath);
+                UploadSmallFileToDropbox(dropboxClient, filePath, destinationPath)
+                    .Wait();
             }
         }
 
